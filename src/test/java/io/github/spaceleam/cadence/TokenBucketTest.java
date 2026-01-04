@@ -1,6 +1,8 @@
 package io.github.spaceleam.cadence;
 
+import io.github.spaceleam.cadence.core.RateLimitResult;
 import io.github.spaceleam.cadence.core.RateLimiter;
+import io.github.spaceleam.cadence.core.RateLimiterListener;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -13,31 +15,27 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Unit tests untuk TokenBucketLimiter.
+ * Unit tests for TokenBucketLimiter.
  */
 class TokenBucketTest {
 
     @Test
-    @DisplayName("Bisa blokir request ke-4 kalau capacity cuma 3")
+    @DisplayName("Block request after capacity exhausted")
     void testBasicLimit() {
-        // Setup: Ember cuma muat 3 token, NO refill
         RateLimiter limiter = Cadence.builder()
                 .capacity(3)
                 .refillRate(0, TimeUnit.SECONDS)
                 .build();
 
-        // Execution
         assertTrue(limiter.tryAcquire(), "Request 1 should succeed");
         assertTrue(limiter.tryAcquire(), "Request 2 should succeed");
         assertTrue(limiter.tryAcquire(), "Request 3 should succeed");
         assertFalse(limiter.tryAcquire(), "Request 4 should be BLOCKED");
-
-        // Kalau try lagi, tetap blocked
         assertFalse(limiter.tryAcquire(), "Request 5 should still be blocked");
     }
 
     @Test
-    @DisplayName("Harus tahan 1000 request sekaligus tanpa crash")
+    @DisplayName("Handle burst traffic without crash")
     void testBurstTraffic() {
         RateLimiter limiter = Cadence.builder()
                 .capacity(100)
@@ -47,7 +45,6 @@ class TokenBucketTest {
         AtomicInteger successCount = new AtomicInteger(0);
         AtomicInteger failedCount = new AtomicInteger(0);
 
-        // Simulate 1000 user tekan tombol submit BARENG
         for (int i = 0; i < 1000; i++) {
             if (limiter.tryAcquire()) {
                 successCount.incrementAndGet();
@@ -61,7 +58,7 @@ class TokenBucketTest {
     }
 
     @Test
-    @DisplayName("50 thread akses barengan - harusnya gak ada race condition")
+    @DisplayName("Thread-safe with concurrent access")
     void testThreadSafety() throws InterruptedException {
         RateLimiter limiter = Cadence.builder()
                 .capacity(1000)
@@ -72,7 +69,6 @@ class TokenBucketTest {
         AtomicInteger successCount = new AtomicInteger(0);
         CountDownLatch latch = new CountDownLatch(5000);
 
-        // 50 thread, masing-masing 100 request = 5000 total request
         for (int i = 0; i < 5000; i++) {
             executor.submit(() -> {
                 try {
@@ -87,152 +83,293 @@ class TokenBucketTest {
 
         assertTrue(latch.await(10, TimeUnit.SECONDS), "All tasks should complete");
         executor.shutdown();
-
-        // Harus TEPAT 1000, gak boleh 1001 atau 999
         assertEquals(1000, successCount.get(), "Exactly 1000 requests should succeed");
     }
 
     @Test
-    @DisplayName("Request berat consume lebih banyak token")
+    @DisplayName("Weighted token consumption")
     void testWeightedRequests() {
         RateLimiter limiter = Cadence.builder()
                 .capacity(10)
                 .refillRate(0, TimeUnit.SECONDS)
                 .build();
 
-        // Light request (1 token)
         assertTrue(limiter.tryAcquire(1), "1 token request should succeed");
         assertEquals(9, limiter.getAvailableTokens());
 
-        // Heavy request (5 token)
         assertTrue(limiter.tryAcquire(5), "5 token request should succeed");
         assertEquals(4, limiter.getAvailableTokens());
 
-        // Another heavy request (5 token) - harusnya gagal
-        assertFalse(limiter.tryAcquire(5), "5 token request should fail - only 4 available");
-
-        // Tapi light request masih bisa
+        assertFalse(limiter.tryAcquire(5), "5 token request should fail");
         assertTrue(limiter.tryAcquire(1), "1 token request should still work");
     }
 
     @Test
-    @DisplayName("Token gak boleh melebihi capacity walau lama gak dipake")
+    @DisplayName("Tokens should not exceed capacity")
     void testCapacityLimit() throws InterruptedException {
         RateLimiter limiter = Cadence.builder()
                 .capacity(10)
-                .refillRate(100, TimeUnit.SECONDS) // Very fast refill
+                .refillRate(100, TimeUnit.SECONDS)
                 .build();
 
-        // Habiskan semua token
         for (int i = 0; i < 10; i++) {
             limiter.tryAcquire();
         }
         assertEquals(0, limiter.getAvailableTokens());
 
-        // Wait for refill (100 tokens/second, wait 200ms = should refill 20 tokens)
         Thread.sleep(200);
 
-        // But should be capped at capacity (10)
         assertTrue(limiter.getAvailableTokens() <= 10,
                 "Tokens should not exceed capacity");
     }
 
     @Test
-    @DisplayName("Kalau refill = 0, token gak pernah nambah")
+    @DisplayName("Static quota with zero refill")
     void testStaticQuota() throws InterruptedException {
         RateLimiter limiter = Cadence.builder()
                 .capacity(5)
-                .refillRate(0, TimeUnit.SECONDS) // NO REFILL!
+                .refillRate(0, TimeUnit.SECONDS)
                 .build();
 
-        // Habiskan 5 token
         for (int i = 0; i < 5; i++) {
             assertTrue(limiter.tryAcquire(), "Token " + (i + 1) + " should be available");
         }
 
-        // Tunggu 100ms (no refill should happen)
         Thread.sleep(100);
 
-        // Tetap gak bisa acquire
-        assertFalse(limiter.tryAcquire(), "Should still be blocked - no refill");
+        assertFalse(limiter.tryAcquire(), "Should still be blocked");
         assertEquals(0, limiter.getAvailableTokens());
     }
 
     @Test
-    @DisplayName("Reset harus kembalikan bucket ke full capacity")
+    @DisplayName("Reset returns bucket to full capacity")
     void testReset() {
         RateLimiter limiter = Cadence.builder()
                 .capacity(10)
                 .refillRate(0, TimeUnit.SECONDS)
                 .build();
 
-        // Habiskan semua token
         for (int i = 0; i < 10; i++) {
             limiter.tryAcquire();
         }
         assertEquals(0, limiter.getAvailableTokens());
 
-        // Reset
         limiter.reset();
-
-        // Should be full again
         assertEquals(10, limiter.getAvailableTokens());
     }
 
     @Test
-    @DisplayName("Token refill setelah periode waktu")
+    @DisplayName("Token refill after time period")
     void testRefillWorks() throws InterruptedException {
-        // 10 token, refill 10 token per detik
         RateLimiter limiter = Cadence.builder()
                 .capacity(10)
                 .refillRate(10, TimeUnit.SECONDS)
                 .build();
 
-        // Habiskan semua token
         for (int i = 0; i < 10; i++) {
             assertTrue(limiter.tryAcquire());
         }
         assertFalse(limiter.tryAcquire(), "Should be empty");
 
-        // Tunggu 1 detik (should refill 10 tokens)
-        Thread.sleep(1100); // Extra 100ms buffer
+        Thread.sleep(1100);
 
-        // Harusnya bisa acquire lagi
         assertTrue(limiter.tryAcquire(), "Should have tokens after refill");
     }
 
     @Test
-    @DisplayName("Exception thrown untuk invalid token amount")
+    @DisplayName("Exception for invalid token amount")
     void testInvalidTokenAmount() {
         RateLimiter limiter = Cadence.builder()
                 .capacity(10)
                 .refillRate(0, TimeUnit.SECONDS)
                 .build();
 
-        assertThrows(IllegalArgumentException.class, () -> {
-            limiter.tryAcquire(0);
-        }, "Should throw for 0 tokens");
-
-        assertThrows(IllegalArgumentException.class, () -> {
-            limiter.tryAcquire(-1);
-        }, "Should throw for negative tokens");
+        assertThrows(IllegalArgumentException.class, () -> limiter.tryAcquire(0));
+        assertThrows(IllegalArgumentException.class, () -> limiter.tryAcquire(-1));
     }
 
     @Test
-    @DisplayName("Builder dengan default values harus work")
+    @DisplayName("Builder with default values")
     void testDefaultBuilder() {
         RateLimiter limiter = Cadence.builder().build();
-
-        // Default capacity adalah 10
         assertEquals(10, limiter.getAvailableTokens());
-
         assertTrue(limiter.tryAcquire());
     }
 
     @Test
-    @DisplayName("Cadence version harus return string")
+    @DisplayName("Version returns valid string")
     void testVersion() {
         assertNotNull(Cadence.version());
         assertTrue(Cadence.version().contains("1.0.0"));
+    }
+
+    // ========== NEW EDGE CASE TESTS ==========
+
+    @Test
+    @DisplayName("Builder rejects negative capacity")
+    void testBuilderRejectsNegativeCapacity() {
+        assertThrows(IllegalArgumentException.class, () -> Cadence.builder().capacity(-100).build());
+    }
+
+    @Test
+    @DisplayName("Builder rejects zero capacity")
+    void testBuilderRejectsZeroCapacity() {
+        assertThrows(IllegalArgumentException.class, () -> Cadence.builder().capacity(0).build());
+    }
+
+    @Test
+    @DisplayName("Builder rejects negative refill rate")
+    void testBuilderRejectsNegativeRefillRate() {
+        assertThrows(IllegalArgumentException.class, () -> Cadence.builder().refillRate(-50, TimeUnit.SECONDS).build());
+    }
+
+    @Test
+    @DisplayName("Builder accepts Integer.MAX_VALUE capacity")
+    void testMaxIntCapacity() {
+        RateLimiter limiter = Cadence.builder()
+                .capacity(Integer.MAX_VALUE)
+                .refillRate(0, TimeUnit.SECONDS)
+                .build();
+
+        assertEquals(Integer.MAX_VALUE, limiter.getAvailableTokens());
+        assertTrue(limiter.tryAcquire());
+    }
+
+    // ========== PRESET TESTS ==========
+
+    @Test
+    @DisplayName("forLogin preset works")
+    void testForLoginPreset() {
+        RateLimiter limiter = Cadence.forLogin();
+        assertNotNull(limiter);
+        assertEquals(5, limiter.getAvailableTokens());
+    }
+
+    @Test
+    @DisplayName("forAPI preset works")
+    void testForAPIPreset() {
+        RateLimiter limiter = Cadence.forAPI();
+        assertNotNull(limiter);
+        assertEquals(100, limiter.getAvailableTokens());
+    }
+
+    @Test
+    @DisplayName("forOTP preset works")
+    void testForOTPPreset() {
+        RateLimiter limiter = Cadence.forOTP();
+        assertNotNull(limiter);
+        assertEquals(3, limiter.getAvailableTokens());
+    }
+
+    // ========== TIMEOUT TESTS ==========
+
+    @Test
+    @DisplayName("tryAcquire with timeout succeeds")
+    void testTryAcquireWithTimeoutSuccess() throws InterruptedException {
+        RateLimiter limiter = Cadence.builder()
+                .capacity(10)
+                .refillRate(0, TimeUnit.SECONDS)
+                .build();
+
+        assertTrue(limiter.tryAcquire(1, TimeUnit.SECONDS));
+    }
+
+    @Test
+    @DisplayName("tryAcquire with timeout fails after timeout")
+    void testTryAcquireWithTimeoutExpires() throws InterruptedException {
+        RateLimiter limiter = Cadence.builder()
+                .capacity(1)
+                .refillRate(0, TimeUnit.SECONDS)
+                .build();
+
+        assertTrue(limiter.tryAcquire()); // Drain
+        assertFalse(limiter.tryAcquire(100, TimeUnit.MILLISECONDS));
+    }
+
+    // ========== RESULT INFO TESTS ==========
+
+    @Test
+    @DisplayName("tryAcquireWithInfo returns success result")
+    void testTryAcquireWithInfoSuccess() {
+        RateLimiter limiter = Cadence.builder()
+                .capacity(10)
+                .refillRate(0, TimeUnit.SECONDS)
+                .build();
+
+        RateLimitResult result = limiter.tryAcquireWithInfo();
+        assertTrue(result.isSuccess());
+        assertEquals(1, result.getTokensRequested());
+        assertEquals(9, result.getTokensAvailable());
+        assertNull(result.getReason());
+    }
+
+    @Test
+    @DisplayName("tryAcquireWithInfo returns rejected result")
+    void testTryAcquireWithInfoRejected() {
+        RateLimiter limiter = Cadence.builder()
+                .capacity(1)
+                .refillRate(0, TimeUnit.SECONDS)
+                .build();
+
+        limiter.tryAcquire(); // Drain
+        RateLimitResult result = limiter.tryAcquireWithInfo();
+        assertFalse(result.isSuccess());
+        assertNotNull(result.getReason());
+        assertTrue(result.getRetryAfterNanos() > 0 || result.getRetryAfterNanos() == Long.MAX_VALUE);
+    }
+
+    // ========== LISTENER TESTS ==========
+
+    @Test
+    @DisplayName("Listener receives acquire events")
+    void testListenerOnAcquire() {
+        AtomicInteger acquireCount = new AtomicInteger(0);
+
+        RateLimiter limiter = Cadence.builder()
+                .capacity(10)
+                .refillRate(0, TimeUnit.SECONDS)
+                .listener(new RateLimiterListener() {
+                    @Override
+                    public void onAcquire(int tokens) {
+                        acquireCount.addAndGet(tokens);
+                    }
+
+                    @Override
+                    public void onReject(int requested, int available) {
+                    }
+                })
+                .build();
+
+        limiter.tryAcquire();
+        limiter.tryAcquire(3);
+
+        assertEquals(4, acquireCount.get());
+    }
+
+    @Test
+    @DisplayName("Listener receives reject events")
+    void testListenerOnReject() {
+        AtomicInteger rejectCount = new AtomicInteger(0);
+
+        RateLimiter limiter = Cadence.builder()
+                .capacity(1)
+                .refillRate(0, TimeUnit.SECONDS)
+                .listener(new RateLimiterListener() {
+                    @Override
+                    public void onAcquire(int tokens) {
+                    }
+
+                    @Override
+                    public void onReject(int requested, int available) {
+                        rejectCount.incrementAndGet();
+                    }
+                })
+                .build();
+
+        limiter.tryAcquire(); // Success
+        limiter.tryAcquire(); // Reject
+        limiter.tryAcquire(); // Reject
+
+        assertEquals(2, rejectCount.get());
     }
 }

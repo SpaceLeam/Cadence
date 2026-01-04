@@ -1,35 +1,78 @@
 package io.github.spaceleam.cadence.core;
 
+import java.util.concurrent.TimeUnit;
+
 /**
- * Interface utama untuk Rate Limiter.
- * Semua implementasi rate limiting strategy harus implement interface ini.
+ * Core interface for rate limiting.
+ * All rate limiter implementations must implement this interface.
+ * 
+ * @since 1.0.0
  */
 public interface RateLimiter {
 
     /**
-     * Coba ambil 1 token dari bucket.
+     * Attempt to acquire 1 token.
      * 
-     * @return true kalau berhasil dapat token, false kalau bucket empty
+     * @return true if token was acquired, false if rate limited
      */
     boolean tryAcquire();
 
     /**
-     * Coba ambil sejumlah token dari bucket (weighted request).
+     * Attempt to acquire multiple tokens (weighted request).
      * 
-     * @param tokens jumlah token yang mau diambil
-     * @return true kalau berhasil, false kalau token tidak cukup
+     * @param tokens number of tokens to acquire
+     * @return true if tokens were acquired, false if insufficient
+     * @throws IllegalArgumentException if tokens is not positive
      */
     boolean tryAcquire(int tokens);
 
     /**
-     * Cek berapa token yang tersedia saat ini.
+     * Attempt to acquire 1 token with timeout.
+     * Blocks until token is available or timeout expires.
      * 
-     * @return jumlah token yang available
+     * @param timeout maximum time to wait
+     * @param unit    time unit of the timeout
+     * @return true if token was acquired, false if timeout expired
+     * @throws InterruptedException if thread is interrupted while waiting
+     */
+    boolean tryAcquire(long timeout, TimeUnit unit) throws InterruptedException;
+
+    /**
+     * Attempt to acquire tokens with timeout.
+     * 
+     * @param tokens  number of tokens to acquire
+     * @param timeout maximum time to wait
+     * @param unit    time unit of the timeout
+     * @return true if tokens were acquired, false if timeout expired
+     * @throws InterruptedException if thread is interrupted while waiting
+     */
+    boolean tryAcquire(int tokens, long timeout, TimeUnit unit) throws InterruptedException;
+
+    /**
+     * Attempt to acquire with detailed result information.
+     * Use this when you need retry information or debugging.
+     * 
+     * @return result with success status and details
+     */
+    RateLimitResult tryAcquireWithInfo();
+
+    /**
+     * Attempt to acquire multiple tokens with detailed result.
+     * 
+     * @param tokens number of tokens to acquire
+     * @return result with success status and details
+     */
+    RateLimitResult tryAcquireWithInfo(int tokens);
+
+    /**
+     * Get current available tokens.
+     * 
+     * @return number of available tokens
      */
     int getAvailableTokens();
 
     /**
-     * Reset bucket ke full capacity.
+     * Reset bucket to full capacity.
      */
     void reset();
 }
