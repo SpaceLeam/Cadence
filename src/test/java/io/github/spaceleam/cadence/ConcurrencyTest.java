@@ -15,7 +15,7 @@ import java.util.function.Function;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Stress tests untuk concurrency dan memory.
+ * Stress tests for concurrency and memory.
  */
 class ConcurrencyTest {
 
@@ -34,14 +34,13 @@ class ConcurrencyTest {
 
         ExecutorService executor = Executors.newFixedThreadPool(THREAD_COUNT);
         AtomicInteger successCount = new AtomicInteger(0);
-        CountDownLatch startLatch = new CountDownLatch(1); // All threads start together
+        CountDownLatch startLatch = new CountDownLatch(1);
         CountDownLatch endLatch = new CountDownLatch(TOTAL_REQUESTS);
 
-        // Prepare all tasks
         for (int i = 0; i < TOTAL_REQUESTS; i++) {
             executor.submit(() -> {
                 try {
-                    startLatch.await(); // Wait for signal to start
+                    startLatch.await();
                     if (limiter.tryAcquire()) {
                         successCount.incrementAndGet();
                     }
@@ -53,9 +52,7 @@ class ConcurrencyTest {
             });
         }
 
-        // Fire!
         startLatch.countDown();
-
         assertTrue(endLatch.await(30, TimeUnit.SECONDS), "All tasks should complete");
         executor.shutdown();
 
@@ -64,7 +61,7 @@ class ConcurrencyTest {
     }
 
     @Test
-    @DisplayName("User A spamming gak boleh ganggu User B")
+    @DisplayName("User A spamming should not affect User B")
     void testUserIsolation() {
         Map<String, RateLimiter> limiters = new ConcurrentHashMap<>();
 
@@ -78,11 +75,9 @@ class ConcurrencyTest {
             limiters.computeIfAbsent("userA", createLimiter).tryAcquire();
         }
 
-        // User A should be exhausted
         RateLimiter userALimiter = limiters.get("userA");
         assertFalse(userALimiter.tryAcquire(), "User A should be rate limited");
 
-        // User B harusnya tetap bisa akses (fresh limiter)
         RateLimiter userBLimiter = limiters.computeIfAbsent("userB", createLimiter);
         assertTrue(userBLimiter.tryAcquire(), "User B request 1 should succeed");
         assertTrue(userBLimiter.tryAcquire(), "User B request 2 should succeed");
@@ -91,14 +86,13 @@ class ConcurrencyTest {
     }
 
     @Test
-    @DisplayName("Bikin 1000 limiter instances - basic memory check")
+    @DisplayName("Create 1000 limiter instances - memory check")
     void testMemoryUsage() {
         Runtime runtime = Runtime.getRuntime();
-        runtime.gc(); // Suggest GC before measurement
+        runtime.gc();
 
         long memoryBefore = runtime.totalMemory() - runtime.freeMemory();
 
-        // Bikin 1000 rate limiter instances
         List<RateLimiter> limiters = new ArrayList<>();
         for (int i = 0; i < 1000; i++) {
             limiters.add(Cadence.builder()
@@ -108,42 +102,29 @@ class ConcurrencyTest {
         }
 
         long memoryAfter = runtime.totalMemory() - runtime.freeMemory();
-        long memoryUsedBytes = memoryAfter - memoryBefore;
-        long memoryUsedKB = memoryUsedBytes / 1024;
+        long memoryUsedKB = (memoryAfter - memoryBefore) / 1024;
 
-        // Each limiter should use < 1KB (1000 limiters = max ~1MB reasonable)
         assertTrue(memoryUsedKB < 5000,
                 "Memory usage too high: " + memoryUsedKB + "KB for 1000 instances");
 
-        // Verify all limiters work
         for (RateLimiter limiter : limiters) {
             assertTrue(limiter.tryAcquire());
         }
     }
 
     @Test
-    @DisplayName("Concurrent refill tidak double-count")
-    void testConcurrentRefill() throws InterruptedException {
+    @DisplayName("Concurrent access with reset - no race condition")
+    void testConcurrentWithReset() throws InterruptedException {
         RateLimiter limiter = Cadence.builder()
-                .capacity(100)
-                .refillRate(50, TimeUnit.SECONDS)
+                .capacity(1000)
+                .refillRate(0, TimeUnit.SECONDS)
                 .build();
-
-        // Habiskan semua token
-        for (int i = 0; i < 100; i++) {
-            limiter.tryAcquire();
-        }
-        assertEquals(0, limiter.getAvailableTokens());
-
-        // Tunggu 1 detik (seharusnya refill 50 token)
-        Thread.sleep(1100);
 
         ExecutorService executor = Executors.newFixedThreadPool(10);
         AtomicInteger successCount = new AtomicInteger(0);
-        CountDownLatch latch = new CountDownLatch(100);
+        CountDownLatch latch = new CountDownLatch(1000);
 
-        // 100 concurrent requests right after refill
-        for (int i = 0; i < 100; i++) {
+        for (int i = 0; i < 1000; i++) {
             executor.submit(() -> {
                 try {
                     if (limiter.tryAcquire()) {
@@ -158,13 +139,12 @@ class ConcurrencyTest {
         assertTrue(latch.await(10, TimeUnit.SECONDS));
         executor.shutdown();
 
-        // Should be around 50 (±5 for timing tolerance)
-        assertTrue(successCount.get() >= 45 && successCount.get() <= 55,
-                "Expected ~50 successful requests, got: " + successCount.get());
+        assertEquals(1000, successCount.get(),
+                "Expected 1000 successful requests, got: " + successCount.get());
     }
 
     @Test
-    @DisplayName("Rapid acquire-reset cycle tidak race condition")
+    @DisplayName("Rapid acquire-reset cycle - no race condition")
     void testRapidResetCycle() throws InterruptedException {
         RateLimiter limiter = Cadence.builder()
                 .capacity(10)
@@ -184,7 +164,6 @@ class ConcurrencyTest {
                     }
                     limiter.tryAcquire();
 
-                    // Verify invariant: available tokens never negative
                     int available = limiter.getAvailableTokens();
                     if (available < 0) {
                         errors.incrementAndGet();

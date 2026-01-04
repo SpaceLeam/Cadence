@@ -1,5 +1,6 @@
 plugins {
     java
+    jacoco
     `maven-publish`
 }
 
@@ -34,6 +35,9 @@ tasks.test {
     
     // Parallel execution (optimal buat dual-core)
     maxParallelForks = 2
+    
+    // Generate coverage report after tests
+    finalizedBy(tasks.jacocoTestReport)
 }
 
 tasks.withType<JavaCompile> {

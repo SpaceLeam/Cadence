@@ -8,7 +8,7 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in Cadence, please report it by emailing **security@spaceleam.io** (or open a private security advisory on GitHub).
+If you discover a security vulnerability in Cadence, please report it by emailing **seetmadilog@gmail.com** (or open a private security advisory on GitHub).
 
 Please include:
 - Description of the vulnerability
