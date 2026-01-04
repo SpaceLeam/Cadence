@@ -1,0 +1,4 @@
+## 2026-01-04 - Integer Overflow in Rate Limiter Logic
+**Vulnerability:** Integer overflow in token refill calculation and accumulation.
+**Learning:** Even with `long` arithmetic, intermediate `int` calculations can overflow when dealing with high-throughput rate limiters (large capacity/refill rates) or significant time jumps. Specifically, `Math.min(int, int + int)` can fail if the sum overflows `int` before `Math.min` is called. Also `periodsElapsed * refillTokens` can overflow `long` if not checked against capacity limits.
+**Prevention:** Always use `long` for intermediate token calculations and clamp values to `capacity` (which is `int`) using explicit checks or `Math.min` with `long` arguments. Explicitly check if potential token addition exceeds reasonable bounds (like capacity) before performing multiplication.

@@ -185,13 +185,23 @@ public class TokenBucketLimiter implements RateLimiter {
 
         if (timeSinceLastRefill >= refillPeriodNanos) {
             long periodsElapsed = timeSinceLastRefill / refillPeriodNanos;
-            int tokensToAdd = (int) Math.min(periodsElapsed * refillTokens, capacity);
+            int tokensToAdd;
+
+            // Prevent overflow: if periodsElapsed is larger than capacity,
+            // we definitely have enough refill to reach capacity.
+            // Also prevents long overflow in (periodsElapsed * refillTokens).
+            if (periodsElapsed > capacity) {
+                tokensToAdd = capacity;
+            } else {
+                tokensToAdd = (int) Math.min(periodsElapsed * refillTokens, capacity);
+            }
 
             if (tokensToAdd > 0) {
                 long newRefillTime = lastRefill + (periodsElapsed * refillPeriodNanos);
 
                 if (lastRefillTime.compareAndSet(lastRefill, newRefillTime)) {
-                    int newTotal = availableTokens.updateAndGet(current -> Math.min(capacity, current + tokensToAdd));
+                    // Use long for addition to prevent integer overflow when current + tokensToAdd > Integer.MAX_VALUE
+                    int newTotal = availableTokens.updateAndGet(current -> (int) Math.min(capacity, (long) current + tokensToAdd));
                     if (listener != null) {
                         listener.onRefill(tokensToAdd, newTotal);
                     }
@@ -207,7 +217,8 @@ public class TokenBucketLimiter implements RateLimiter {
         if (refillPeriodNanos == 0 || refillTokens == 0) {
             return Long.MAX_VALUE;
         }
-        long periodsNeeded = (tokensNeeded + refillTokens - 1) / refillTokens;
+        // Use long arithmetic to prevent overflow in numerator
+        long periodsNeeded = ((long) tokensNeeded + refillTokens - 1) / refillTokens;
         return periodsNeeded * refillPeriodNanos;
     }
 }
