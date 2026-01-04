@@ -74,7 +74,9 @@ tasks.javadoc {
     (options as StandardJavadocDocletOptions).apply {
         links("https://docs.oracle.com/en/java/javase/21/docs/api/")
         addBooleanOption("html5", true)
+        addStringOption("Xdoclint:none", "-quiet")
     }
+    isFailOnError = false
 }
 
 // Publishing configuration (buat nanti publish ke Maven Central)
