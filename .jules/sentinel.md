@@ -1,0 +1,4 @@
+## 2024-05-23 - Integer Overflow in Rate Limiter
+**Vulnerability:** Token bucket algorithm used standard integer arithmetic for token refill calculations. High refill rates or long idle periods caused `periodsElapsed * refillTokens` to overflow `long`, resulting in negative values. `Math.min` picked the negative value, halting refills (DoS). Additionally, `current + tokensToAdd` could overflow `int` if capacity was near `MAX_VALUE`, locking the bucket.
+**Learning:** Rate limiters operating with nanosecond precision and potentially large capacities are susceptible to integer overflows even with `long`. Standard arithmetic operators do not check for overflow.
+**Prevention:** Use explicit overflow checks (e.g., `Math.multiplyExact` or logic checks like `a > limit / b`) for token calculations. Perform intermediate accumulation in `long` and clamp to capacity before casting to `int`.

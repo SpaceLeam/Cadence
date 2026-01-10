@@ -185,13 +185,21 @@ public class TokenBucketLimiter implements RateLimiter {
 
         if (timeSinceLastRefill >= refillPeriodNanos) {
             long periodsElapsed = timeSinceLastRefill / refillPeriodNanos;
-            int tokensToAdd = (int) Math.min(periodsElapsed * refillTokens, capacity);
+            int tokensToAdd;
+
+            // Check for potential long overflow in periodsElapsed * refillTokens
+            // If periodsElapsed > capacity / refillTokens, the result will exceed capacity anyway
+            if (periodsElapsed > capacity / refillTokens) {
+                tokensToAdd = capacity;
+            } else {
+                tokensToAdd = (int) Math.min(periodsElapsed * refillTokens, capacity);
+            }
 
             if (tokensToAdd > 0) {
                 long newRefillTime = lastRefill + (periodsElapsed * refillPeriodNanos);
 
                 if (lastRefillTime.compareAndSet(lastRefill, newRefillTime)) {
-                    int newTotal = availableTokens.updateAndGet(current -> Math.min(capacity, current + tokensToAdd));
+                    int newTotal = availableTokens.updateAndGet(current -> (int) Math.min(capacity, (long) current + tokensToAdd));
                     if (listener != null) {
                         listener.onRefill(tokensToAdd, newTotal);
                     }
